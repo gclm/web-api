@@ -1,5 +1,5 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 mkdir -p /app/harPool
-cd /app && nohup web-api & echo "启动成功"
+cd /app && ./gpt

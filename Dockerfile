@@ -18,14 +18,14 @@ RUN go mod download
 COPY . .
 
 # Build the Go application and output the binary to /app/ChatGPT-Proxy-V4
-RUN go build -o /app/web-api .
+RUN go build -o /app/gpt .
 
 FROM alpine:latest
 
 WORKDIR /app
 
-COPY --from=builder /app/web-api /app/web-api
-COPY docker-entrypoint.sh /entrypoint.sh
+COPY --from=builder /app/gpt /app/gpt
+COPY ./docker-entrypoint.sh /app/docker-entrypoint.sh
 
 ARG TZ="Asia/Shanghai"
 ENV TZ ${TZ}
@@ -33,8 +33,8 @@ ENV TZ ${TZ}
 RUN apk add --no-cache bash tzdata \
     && ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime \
     && echo ${TZ} > /etc/timezone \
-    && chmod +x /entrypoint.sh
+    && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8080
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
