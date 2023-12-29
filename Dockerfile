@@ -21,7 +21,7 @@ COPY . .
 RUN go build -o /app/web-api .
 
 # Use a scratch image as the final distroless image
-FROM scratch
+FROM alpine:latest
 
 # Set the working directory
 WORKDIR /app
@@ -29,8 +29,9 @@ WORKDIR /app
 # Copy the built Go binary from the builder stage
 COPY --from=builder /app/web-api /app/web-api
 
+RUN mkdir -p /app/harPool
+
 # Expose the port where the application is running
 EXPOSE 8080
 
-# Start the application
-CMD [ "./app/web-api" ]
+ENTRYPOINT ["cd /app && ./web-api"]
