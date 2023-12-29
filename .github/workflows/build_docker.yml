@@ -15,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
+      - name: Set Docker Image Version
+        id: set_docket_images_version
+        run: |
+          IMAGE_VERSION=$(TZ='Asia/Shanghai' date +'%Y%m%d%H%M')
+          echo "IMAGE_VERSION=${IMAGE_VERSION}" >> $GITHUB_ENV  
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
@@ -37,5 +43,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/chatgpt-to-api:$(TZ='Asia/Shanghai' date +'%Y%m%d%H%M')
+            ghcr.io/${{ github.repository_owner }}/chatgpt-to-api:${{ env.IMAGE_VERSION }}
             ghcr.io/${{ github.repository_owner }}/chatgpt-to-api:latest
