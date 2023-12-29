@@ -18,7 +18,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go application and output the binary to /app/ChatGPT-Proxy-V4
-RUN go build -o /app/ChatGPT-To-API .
+RUN go build -o /app/web-api .
 
 # Use a scratch image as the final distroless image
 FROM scratch
@@ -27,11 +27,14 @@ FROM scratch
 WORKDIR /app
 
 # Copy the built Go binary from the builder stage
-COPY --from=builder /app/ChatGPT-To-API /app/ChatGPT-To-API
+COPY --from=builder /app/web-api /app/web-api
 
-RUN mkdir /app/harPool
+RUN cd /app \
+    && mkdir -p harPool \
+    && chmod +x /app/web-api
+
 # Expose the port where the application is running
 EXPOSE 8080
 
 # Start the application
-CMD [ "./app/ChatGPT-To-API" ]
+CMD [ "./app/web-api" ]
