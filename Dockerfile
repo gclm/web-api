@@ -29,10 +29,6 @@ WORKDIR /app
 # Copy the built Go binary from the builder stage
 COPY --from=builder /app/web-api /app/web-api
 
-RUN cd /app \
-    && mkdir -p harPool \
-    && chmod +x /app/web-api
-
 # Expose the port where the application is running
 EXPOSE 8080
 
