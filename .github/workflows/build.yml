@@ -28,7 +28,7 @@ jobs:
           - goos: linux
             goarch: arm64
           - goos: darwin
-            goarch: 386
+            goarch: arm64
           - goos: darwin
             goarch: amd64
     steps:
