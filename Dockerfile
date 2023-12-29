@@ -29,8 +29,9 @@ WORKDIR /app
 # Copy the built Go binary from the builder stage
 COPY --from=builder /app/ChatGPT-To-API /app/ChatGPT-To-API
 
+RUN mkdir /app/harPool
 # Expose the port where the application is running
 EXPOSE 8080
 
 # Start the application
-CMD [ "./ChatGPT-To-API" ]
+CMD [ "./app/ChatGPT-To-API" ]
