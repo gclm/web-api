@@ -20,18 +20,21 @@ COPY . .
 # Build the Go application and output the binary to /app/ChatGPT-Proxy-V4
 RUN go build -o /app/web-api .
 
-# Use a scratch image as the final distroless image
 FROM alpine:latest
 
-# Set the working directory
 WORKDIR /app
 
-# Copy the built Go binary from the builder stage
 COPY --from=builder /app/web-api /app/web-api
+COPY docker-entrypoint.sh /entrypoint.sh
 
-RUN mkdir -p /app/harPool
+ARG TZ="Asia/Shanghai"
+ENV TZ ${TZ}
 
-# Expose the port where the application is running
+RUN apk add --no-cache bash tzdata \
+    && ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo ${TZ} > /etc/timezone \
+    && chmod +x /entrypoint.sh
+
 EXPOSE 8080
 
-ENTRYPOINT ["cd /app && ./web-api"]
+ENTRYPOINT ["/entrypoint.sh"]
