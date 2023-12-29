@@ -2,9 +2,10 @@ name: Go Build
 
 on:
   push:
-    branches: [ master ]
+    branches: [ "*" ]
   pull_request:
-    branches: [ master ]
+    branches: [ "*" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,6 +27,10 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
+          - goos: darwin
+            goarch: 386
+          - goos: darwin
+            goarch: amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -42,10 +47,11 @@ jobs:
           if [ "${{ matrix.goos }}" == "windows" ]; then
             suffix=".exe"
           fi
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ./build/freechatgpt-${{ matrix.goos }}-${{ matrix.goarch }}$suffix
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ./build/gpt-${{ matrix.goos }}-${{ matrix.goarch }}$suffix
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: freechatgpt-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ./build/freechatgpt-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: gpt-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ./build/gpt-${{ matrix.goos }}-${{ matrix.goarch }}*
+
