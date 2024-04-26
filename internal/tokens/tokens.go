@@ -7,8 +7,9 @@ import (
 )
 
 type Secret struct {
-	Token string `json:"token"`
-	PUID  string `json:"puid"`
+	Token      string `json:"token"`
+	PUID       string `json:"puid"`
+	TeamUserID string `json:"team_uid,omitempty"`
 }
 type AccessToken struct {
 	tokens map[string]Secret
@@ -21,8 +22,8 @@ func NewAccessToken(tokens map[string]Secret) AccessToken {
 	}
 }
 
-func (a *AccessToken) Set(name string, token string, puid string) {
-	a.tokens[name] = Secret{Token: token, PUID: puid}
+func (a *AccessToken) Set(name string, token string, puid string, tuid string) {
+	a.tokens[name] = Secret{Token: token, PUID: puid, TeamUserID: tuid}
 }
 
 func (a *AccessToken) GetKeys() []string {
@@ -48,13 +49,12 @@ func (a *AccessToken) Save() bool {
 	return err == nil
 }
 
-func (a *AccessToken) GetSecret(account string) (string, string) {
+func (a *AccessToken) GetSecret(account string) Secret {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
 	if len(a.tokens) == 0 {
-		return "", ""
+		return Secret{}
 	}
-	secret := a.tokens[account]
-	return secret.Token, secret.PUID
+	return a.tokens[account]
 }
