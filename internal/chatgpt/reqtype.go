@@ -26,8 +26,6 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 
-	tls_client "github.com/bogdanfinn/tls-client"
-	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/google/uuid"
 )
 
@@ -71,8 +69,8 @@ type ChatGPTRequest struct {
 	ConversationID             string            `json:"conversation_id,omitempty"`
 	Model                      string            `json:"model"`
 	HistoryAndTrainingDisabled bool              `json:"history_and_training_disabled"`
-	ArkoseToken                string            `json:"arkose_token,omitempty"`
 	WebsocketRequestId         string            `json:"websocket_request_id"`
+	ForceSSE                   bool              `json:"force_use_sse"`
 }
 type FileResp struct {
 	File_id    string `json:"file_id"`
@@ -85,13 +83,14 @@ type UploadResp struct {
 }
 
 type FileResult struct {
-	Mime     string
-	Filename string
-	Fileid   string
-	Filesize int
-	Isimage  bool
-	Bounds   [2]int
-	// Current file max-age 1 year
+	Mime      string
+	Filename  string
+	Fileid    string
+	Filesize  int
+	Isimage   bool
+	Bounds    [2]int
+	TokenSize int
+	// Current file max-age 30 days
 	Upload int64
 }
 
@@ -104,30 +103,28 @@ type ImgPart struct {
 }
 
 type ImgMeta struct {
-	Id       string `json:"id"`
-	MimeType string `json:"mimeType"`
-	Name     string `json:"name"`
-	Size     int    `json:"size"`
-	Width    int    `json:"width,omitempty"`
-	Height   int    `json:"height,omitempty"`
+	Id        string `json:"id"`
+	MimeType  string `json:"mimeType"`
+	Name      string `json:"name"`
+	Size      int    `json:"size"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	TokenSize int    `json:"file_token_size,omitempty"`
+}
+
+type RetrievalResult struct {
+	FileSizeTokens int    `json:"file_size_tokens,omitempty"`
+	Status         string `json:"retrieval_index_status"`
 }
 
 var (
-	client, _ = tls_client.NewHttpClient(tls_client.NewNoopLogger(), []tls_client.HttpClientOption{
-		tls_client.WithCookieJar(tls_client.NewCookieJar()),
-		tls_client.WithTimeoutSeconds(600),
-		tls_client.WithClientProfile(profiles.Okhttp4Android13),
-	}...)
-	userAgent    = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-	fileHashPool = map[string]*FileResult{}
+	fileHashPool  = map[string]*FileResult{}
+	retrievalMime = map[string]bool{}
 )
 
 func init() {
-	u, _ := url.Parse("https://chatgpt.com")
-	client.GetCookieJar().SetCookies(u, []*http.Cookie{{
-		Name:  "oai-dm-tgt-c-240329",
-		Value: "2024-04-02",
-	}})
+	// from https://chatgpt.com/backend-api/models?history_and_training_disabled=false models product_features
+	retrievalMime = map[string]bool{"text/rtf": true, "application/javascript": true, "text/x-tex": true, "text/css": true, "text/xml": true, "message/rfc822": true, "text/javascript": true, "application/rtf": true, "text/x-typescript": true, "application/x-powershell": true, "application/x-sql": true, "text/x-shellscript": true, "text/x-c++": true, "text/markdown": true, "text/x-php": true, "text/x-script.python": true, "text/vbscript": true, "text/x-asm": true, "application/vnd.oasis.opendocument.text": true, "text/x-lisp": true, "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true, "application/x-rust": true, "text/x-diff": true, "text/x-python": true, "application/vnd.apple.keynote": true, "application/vnd.ms-powerpoint": true, "application/x-yaml": true, "application/msword": true, "application/x-scala": true, "text/plain": true, "text/html": true, "application/json": true, "text/calendar": true, "text/x-csharp": true, "text/x-rst": true, "text/x-java": true, "text/x-makefile": true, "application/pdf": true, "text/x-c": true, "text/x-vcard": true, "application/vnd.apple.pages": true, "application/vnd.openxmlformats-officedocument.presentationml.presentation": true, "text/x-ruby": true, "text/x-sh": true}
 	// from https://chromium.googlesource.com/chromium/src/+/HEAD/net/base/mime_util.cc
 	mimeMap := map[string]string{
 		"webm":                "video/webm",
@@ -237,28 +234,8 @@ func NewChatGPTRequest() ChatGPTRequest {
 		HistoryAndTrainingDisabled: disable_history,
 		ConversationMode:           ChatGPTConvMode{Kind: "primary_assistant"},
 		WebsocketRequestId:         uuid.NewString(),
+		ForceSSE:                   true,
 	}
-}
-
-func newRequest(method string, url string, body io.Reader, secret *tokens.Secret, deviceId string) (*http.Request, error) {
-	request, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return &http.Request{}, err
-	}
-	request.Header.Set("User-Agent", userAgent)
-	request.Header.Set("Accept", "*/*")
-	request.Header.Set("Oai-Device-Id", deviceId)
-	request.Header.Set("Oai-Language", "en-US")
-	if secret.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+secret.Token)
-	}
-	if secret.PUID != "" {
-		request.Header.Set("Cookie", "_puid="+secret.PUID+";")
-	}
-	if secret.TeamUserID != "" {
-		request.Header.Set("Chatgpt-Account-Id", secret.TeamUserID)
-	}
-	return request, nil
 }
 
 func processUrl(urlstr string, account string, secret *tokens.Secret, deviceId string, proxy string) *FileResult {
@@ -272,6 +249,10 @@ func processUrl(urlstr string, account string, secret *tokens.Secret, deviceId s
 	fileName := path.Base(u.Path)
 	extIndex := strings.Index(fileName, ".")
 	mimeType := mime.TypeByExtension(fileName[extIndex:])
+	mimeIdx := strings.Index(mimeType, ";")
+	if mimeIdx != -1 {
+		mimeType = mimeType[:mimeIdx]
+	}
 	request, err := http.NewRequest(http.MethodGet, urlstr, nil)
 	if err != nil {
 		return nil
@@ -288,7 +269,7 @@ func processUrl(urlstr string, account string, secret *tokens.Secret, deviceId s
 	hasher := sha1.New()
 	hasher.Write(binary)
 	hash := account + secret.TeamUserID + hex.EncodeToString(hasher.Sum(nil))
-	if fileHashPool[hash] != nil && time.Now().Unix() < fileHashPool[hash].Upload+31536000 {
+	if fileHashPool[hash] != nil && time.Now().Unix() < fileHashPool[hash].Upload+2592000 {
 		return fileHashPool[hash]
 	}
 	isImg := strings.HasPrefix(mimeType, "image")
@@ -304,7 +285,11 @@ func processUrl(urlstr string, account string, secret *tokens.Secret, deviceId s
 	if fileid == "" {
 		return nil
 	} else {
-		result := FileResult{Mime: mimeType, Filename: fileName, Filesize: len(binary), Fileid: fileid, Isimage: isImg, Bounds: bounds, Upload: time.Now().Unix()}
+		tokenSize := 0
+		if !isImg && retrievalMime[mimeType] {
+			tokenSize = getRetrievalToken(fileid, 10, secret, deviceId, proxy)
+		}
+		result := FileResult{Mime: mimeType, Filename: fileName, Filesize: len(binary), Fileid: fileid, Isimage: isImg, Bounds: bounds, TokenSize: tokenSize, Upload: time.Now().Unix()}
 		fileHashPool[hash] = &result
 		return &result
 	}
@@ -318,12 +303,16 @@ func processDataUrl(data string, account string, secret *tokens.Secret, deviceId
 	hasher := sha1.New()
 	hasher.Write(binary)
 	hash := account + secret.TeamUserID + hex.EncodeToString(hasher.Sum(nil))
-	if fileHashPool[hash] != nil && time.Now().Unix() < fileHashPool[hash].Upload+31536000 {
+	if fileHashPool[hash] != nil && time.Now().Unix() < fileHashPool[hash].Upload+2592000 {
 		return fileHashPool[hash]
 	}
 	startIdx := strings.Index(data, ":")
 	endIdx := strings.Index(data, ";")
 	mimeType := data[startIdx+1 : endIdx]
+	mimeIdx := strings.Index(mimeType, ";")
+	if mimeIdx != -1 {
+		mimeType = mimeType[:mimeIdx]
+	}
 	var fileName string
 	extensions, _ := mime.ExtensionsByType(mimeType)
 	if len(extensions) > 0 {
@@ -345,7 +334,11 @@ func processDataUrl(data string, account string, secret *tokens.Secret, deviceId
 	if fileid == "" {
 		return nil
 	} else {
-		result := FileResult{Mime: mimeType, Filename: fileName, Filesize: len(binary), Fileid: fileid, Isimage: isImg, Bounds: bounds, Upload: time.Now().Unix()}
+		tokenSize := 0
+		if !isImg && retrievalMime[mimeType] {
+			tokenSize = getRetrievalToken(fileid, 10, secret, deviceId, proxy)
+		}
+		result := FileResult{Mime: mimeType, Filename: fileName, Filesize: len(binary), Fileid: fileid, Isimage: isImg, Bounds: bounds, TokenSize: tokenSize, Upload: time.Now().Unix()}
 		fileHashPool[hash] = &result
 		return &result
 	}
@@ -357,6 +350,8 @@ func uploadBinary(data []byte, mime string, name string, isImg bool, secret *tok
 	var fileCase string
 	if isImg {
 		fileCase = "multimodal"
+	} else if retrievalMime[mime] {
+		fileCase = "my_files"
 	} else {
 		fileCase = "ace_upload"
 	}
@@ -408,10 +403,40 @@ func uploadBinary(data []byte, mime string, name string, isImg bool, secret *tok
 	}
 	return fileResp.File_id
 }
-
+func getRetrievalToken(fileid string, retry int, secret *tokens.Secret, deviceId string, proxy string) int {
+	if proxy != "" {
+		client.SetProxy(proxy)
+	}
+	request, err := newRequest(http.MethodGet, "https://chatgpt.com/backend-api/files/"+fileid, nil, secret, deviceId)
+	if err != nil {
+		return 0
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return 0
+	}
+	defer response.Body.Close()
+	var evalResp RetrievalResult
+	err = json.NewDecoder(response.Body).Decode(&evalResp)
+	if err != nil {
+		return 0
+	}
+	if evalResp.Status == "success" {
+		return evalResp.FileSizeTokens
+	} else {
+		retry = retry - 1
+		if retry == 0 {
+			return 0
+		} else {
+			time.Sleep(time.Millisecond * 500)
+			return getRetrievalToken(fileid, retry, secret, deviceId, proxy)
+		}
+	}
+}
 func (c *ChatGPTRequest) AddMessage(role string, content interface{}, multimodal bool, account string, secret *tokens.Secret, deviceId string, proxy string) {
 	parts := []interface{}{}
-	var result *FileResult
+	var metadatas Chatgpt_metadata
+	msgType := "text"
 	switch v := content.(type) {
 	case string:
 		parts = append(parts, v)
@@ -437,6 +462,7 @@ func (c *ChatGPTRequest) AddMessage(role string, content interface{}, multimodal
 					continue
 				}
 				data := item.Image.Url
+				var result *FileResult
 				if strings.HasPrefix(data, "data:") {
 					result = processDataUrl(data, account, secret, deviceId, proxy)
 					if result == nil {
@@ -449,7 +475,11 @@ func (c *ChatGPTRequest) AddMessage(role string, content interface{}, multimodal
 					}
 				}
 				if result.Isimage {
+					msgType = "multimodal_text"
 					parts = append(parts, ImgPart{Asset_pointer: "file-service://" + result.Fileid, Content_type: "image_asset_pointer", Size_bytes: result.Filesize, Width: result.Bounds[0], Height: result.Bounds[1]})
+					metadatas.Attachments = append(metadatas.Attachments, ImgMeta{Id: result.Fileid, Name: result.Filename, Size: result.Filesize, MimeType: result.Mime, Width: result.Bounds[0], Height: result.Bounds[1]})
+				} else {
+					metadatas.Attachments = append(metadatas.Attachments, ImgMeta{Id: result.Fileid, Name: result.Filename, Size: result.Filesize, MimeType: result.Mime, TokenSize: result.TokenSize})
 				}
 			} else {
 				parts = append(parts, item.Text)
@@ -459,14 +489,21 @@ func (c *ChatGPTRequest) AddMessage(role string, content interface{}, multimodal
 	var msg = chatgpt_message{
 		ID:       uuid.New(),
 		Author:   chatgpt_author{Role: role},
-		Content:  chatgpt_content{ContentType: "text", Parts: parts},
+		Content:  chatgpt_content{ContentType: msgType, Parts: parts},
 		Metadata: nil,
 	}
-	if result != nil {
-		if result.Isimage {
-			msg.Content.ContentType = "multimodal_text"
-		}
-		msg.Metadata = &Chatgpt_metadata{Attachments: []ImgMeta{{Id: result.Fileid, Name: result.Filename, Size: result.Filesize, MimeType: result.Mime, Width: result.Bounds[0], Height: result.Bounds[1]}}}
+	if metadatas.Attachments != nil {
+		msg.Metadata = &metadatas
+	}
+	c.Messages = append(c.Messages, msg)
+}
+
+func (c *ChatGPTRequest) AddAssistantMessage(input string) {
+	var msg = chatgpt_message{
+		ID:       uuid.New(),
+		Author:   chatgpt_author{Role: "assistant"},
+		Content:  chatgpt_content{ContentType: "text", Parts: []interface{}{input}},
+		Metadata: nil,
 	}
 	c.Messages = append(c.Messages, msg)
 }
